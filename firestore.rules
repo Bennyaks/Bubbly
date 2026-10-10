@@ -1,0 +1,150 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isUser(uid) { return signedIn() && request.auth.uid == uid; }
+
+    // ---------- Videos (TikTok) ----------
+    // Counters, score, status changes and thumbnails are written ONLY by Cloud Functions.
+    match /posts/{postId} {
+      // Lists must filter on status == 'ready' (feed) or uid == me (my videos).
+      allow read: if signedIn() && (resource.data.status == 'ready' || resource.data.uid == request.auth.uid);
+      allow create: if isUser(request.resource.data.uid)
+        && request.resource.data.status == 'processing'
+        && request.resource.data.likeCount == 0 && request.resource.data.commentCount == 0
+        && request.resource.data.shareCount == 0 && request.resource.data.viewCount == 0
+        && request.resource.data.completeCount == 0 && request.resource.data.score == 0
+        && request.resource.data.caption is string && request.resource.data.caption.size() <= 150
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.keys().hasOnly(['uid', 'author', 'caption', 'status', 'likeCount',
+             'commentCount', 'shareCount', 'viewCount', 'completeCount', 'score', 'createdAt']);
+      allow update: if false;
+      allow delete: if isUser(resource.data.uid);
+
+      match /likes/{uid} {
+        allow read: if signedIn();
+        allow create: if isUser(uid) && request.resource.data.keys().hasOnly(['createdAt'])
+          && request.resource.data.createdAt == request.time;
+        allow delete: if isUser(uid);
+      }
+      match /comments/{commentId} {
+        allow read: if signedIn();
+        allow create: if isUser(request.resource.data.uid)
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 500
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.keys().hasOnly(['text', 'uid', 'author', 'createdAt']);
+        allow delete: if isUser(resource.data.uid)
+          || isUser(get(/databases/$(database)/documents/posts/$(postId)).data.uid);
+      }
+    }
+
+    // ---------- Social graph ----------
+    match /follows/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.follower == request.auth.uid
+        && request.resource.data.followee != request.auth.uid
+        && id == request.auth.uid + '_' + request.resource.data.followee
+        && request.resource.data.keys().hasOnly(['follower', 'followee', 'createdAt']);
+      allow delete: if isUser(resource.data.follower);
+    }
+    match /blocks/{uid}/list/{target} {
+      allow read, write: if isUser(uid);
+    }
+
+    // ---------- Identity ----------
+    match /usernames/{name} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid; // create only: names can't be stolen
+    }
+    match /profiles/{uid} {
+      allow read: if signedIn();
+      allow create: if isUser(uid)
+        && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid;
+      allow update: if isUser(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'bio', 'avatarUrl'])
+        && request.resource.data.get('bio', '').size() <= 150
+        && request.resource.data.get('displayName', '').size() <= 40;
+    }
+    match /users/{uid} {                       // private settings such as linked social usernames
+      allow read, write: if isUser(uid);
+      // per-chat preferences: pinned, muted, archived (only you can see or change them)
+      match /chatPrefs/{chatId} {
+        allow read, write: if isUser(uid);
+      }
+    }
+
+    // ---------- Activity feed (written by functions; you can mark yours as read or delete) ----------
+    match /notifications/{uid}/items/{id} {
+      allow read, delete: if isUser(uid);
+      allow update: if isUser(uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+    }
+
+    // ---------- Messaging (Telegram) ----------
+    match /chats/{chatId} {
+      allow get: if signedIn() && (resource == null || request.auth.uid in resource.data.members);
+      allow list: if signedIn() && request.auth.uid in resource.data.members;
+      allow create: if signedIn()
+        && request.auth.uid in request.resource.data.members
+        && request.resource.data.members.size() <= 50
+        && (request.resource.data.type == 'group'
+            || (request.resource.data.type == 'direct' && request.resource.data.members.size() == 2))
+        && request.resource.data.keys().hasOnly(['type', 'title', 'members', 'names', 'ownerUid', 'createdAt']);
+      // Members may only update THEIR OWN read marker and unread counter. lastMessage is server-written.
+      allow update: if signedIn() && request.auth.uid in resource.data.members
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastRead', 'unread'])
+        && request.resource.data.get('lastRead', {}).diff(resource.data.get('lastRead', {})).affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.get('unread', {}).diff(resource.data.get('unread', {})).affectedKeys().hasOnly([request.auth.uid]);
+
+      match /messages/{messageId} {
+        allow read: if signedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.members;
+        allow create: if signedIn()
+          && request.resource.data.from == request.auth.uid
+          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.members
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 4000
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.keys().hasOnly(['text', 'from', 'fromName', 'createdAt']);
+      }
+    }
+
+    // ---------- Channels (owner broadcasts, members read) ----------
+    match /channels/{channelId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members']);
+      match /posts/{postId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && get(/databases/$(database)/documents/channels/$(channelId)).data.ownerUid == request.auth.uid
+          && request.resource.data.text is string && request.resource.data.text.size() <= 4000;
+      }
+    }
+
+    // ---------- Read-only for clients, written by functions ----------
+    match /lives/{id} {
+      allow read: if signedIn();                // the room itself is written by functions
+      match /messages/{mid} {                   // live chat
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 200
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.keys().hasOnly(['text', 'from', 'fromName', 'createdAt'])
+          && get(/databases/$(database)/documents/lives/$(id)).data.status == 'live';
+      }
+      match /viewers/{uid} {                    // presence, counted by a function
+        allow read: if signedIn();
+        allow create: if isUser(uid) && request.resource.data.keys().hasOnly(['at']);
+        allow delete: if isUser(uid);
+      }
+    }
+    match /meta/{doc}  { allow read: if signedIn(); }
+    // reports, pushTokens, ratelimits, moderation, users/{uid}/seen: no client access at all
+  }
+}

@@ -39,3 +39,41 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Firebase emulator data and logs
+emulator-data/
+firebase-export-*/
+*-debug.log
+functions/node_modules/
+
+# backups
+*.bak
+
+# Dependencies and build output
+node_modules/
+.expo/
+dist/
+web-build/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+service-account*.json
+*serviceAccount*.json
+
+# Firebase emulator data and logs
+firebase-debug.log
+ui-debug.log
+emulator-data/
+
+# Local development files
+.DS_Store
+Thumbs.db
+# Backup files
+
+*.bak
+
+# Firebase debug logs
+
+firestore-debug.log
