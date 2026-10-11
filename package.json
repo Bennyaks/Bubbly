@@ -4,6 +4,7 @@
   "main": "index.js",
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/netinfo": "12.0.1",
     "expo": "^57.0.26",
     "expo-constants": "~57.0.20",
     "expo-file-system": "~57.0.7",
@@ -25,7 +26,13 @@
     "web": "expo start --web",
     "backend:install": "npm install --prefix functions",
     "emulators": "firebase emulators:start --import=./emulator-data --export-on-exit",
-    "emulators:fresh": "firebase emulators:start --export-on-exit=./emulator-data"
+    "emulators:fresh": "firebase emulators:start --export-on-exit=./emulator-data",
+    "test": "node --test \"functions/test/*.test.js\" \"src/tests/*.test.js\"",
+    "test:rules": "npm install --prefix tests && firebase emulators:exec --only firestore,storage --project demo-bubbly \"node --test tests/rules.test.js\"",
+    "test:all": "npm test && npm run test:rules",
+    "smoke": "node scripts/smoke.js",
+    "deploy:dev": "firebase deploy --project dev",
+    "deploy:prod": "firebase deploy --project prod"
   },
   "private": true
 }

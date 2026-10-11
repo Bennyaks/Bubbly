@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList } from 'react-native';
-import { collection, doc, getDocs, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../firebase';
 import { useNav } from '../nav';
 import { s, C, Avatar, Overlay } from '../ui';
 import FollowButton from '../components/FollowButton';
 import VideoGrid from '../components/VideoGrid';
+import { searchUsers, watchTrending } from '../services/profiles';
+import { postsByHashtag } from '../services/posts';
 
 // Search people by username, or videos by #hashtag. Shows trending hashtags until you type.
 export default function Search() {
@@ -17,7 +16,7 @@ export default function Search() {
   const [trending, setTrending] = useState([]);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => onSnapshot(doc(db, 'meta', 'trending'), (d) => setTrending((d.data() || {}).tags || []), () => {}), []);
+  useEffect(() => watchTrending(setTrending), []);
 
   useEffect(() => {
     const text = q.trim();
@@ -27,12 +26,11 @@ export default function Search() {
       setBusy(true);
       try {
         if (text.startsWith('#')) {
-          const tag = text.slice(1).toLowerCase();
-          const sn = await getDocs(query(collection(db, 'posts'), where('hashtags', 'array-contains', tag), where('status', '==', 'ready'), orderBy('score', 'desc'), limit(30)));
-          if (alive) { setVideos(sn.docs.map((d) => ({ id: d.id, ...d.data() }))); setUsers([]); }
+          const found = await postsByHashtag(text.slice(1));
+          if (alive) { setVideos(found); setUsers([]); }
         } else {
-          const r = await httpsCallable(functions, 'searchUsers')({ q: text });
-          if (alive) { setUsers(r.data.users || []); setVideos([]); }
+          const found = await searchUsers(text);
+          if (alive) { setUsers(found); setVideos([]); }
         }
       } catch (e) { console.warn('search', e.message); }
       if (alive) setBusy(false);

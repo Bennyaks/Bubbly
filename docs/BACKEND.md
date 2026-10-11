@@ -118,6 +118,12 @@ failed posts older than a day are deleted, and old rate-limit records are cleare
 | endStaleLives (+ endStaleNow in emulator) | Scheduled | close lives whose host went silent |
 | livekitWebhook | HTTP | LiveKit room events (needs LiveKit configured) |
 
+## 4c. Error handling and logging
+- Every callable is wrapped by `safe()` (`functions/lib.js`). Expected problems (rate limit, not the owner, name not found) reach the app
+  with a clear message. Anything unexpected is logged in full to Cloud Logging and the user only sees "Something went wrong. Please try again."
+- All logging uses structured `logger` calls, so alerts can filter by severity (PRODUCTION.md section 2).
+- Pure logic lives in `functions/logic.js` and `functions/video.js` so it can be unit tested (TESTING.md).
+
 ## 5. Security model
 - Rules deny everything not listed. Clients cannot write counters, scores, status, `lastMessage`, or other people's data.
 - Usernames are create-only, so a taken name can never be overwritten.

@@ -35,6 +35,10 @@ Wait for "All emulators ready". If Windows asks about the firewall, allow Java a
    - ranking:  http://localhost:5001/bubbly-bfef3/us-central1/rankFeedNow
    - cleanup:  http://localhost:5001/bubbly-bfef3/us-central1/cleanupNow
 
+## Password reset and verification emails
+The emulator never sends real emails. After "Forgot password?" or sign-up, the reset or verification LINK is printed in the terminal
+where the emulator runs, and listed in the control panel under Authentication. Copy the link into a browser to complete the step.
+
 ## Differences from real Firebase
 - Scheduled functions do not fire locally (use the two links above).
 - Composite indexes are not needed locally; they are needed in production (already in `firestore.indexes.json`).

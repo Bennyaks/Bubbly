@@ -1,6 +1,7 @@
 const { initializeApp, getApps } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { HttpsError } = require('firebase-functions/v2/https');
+const { logger } = require('firebase-functions');
 
 if (!getApps().length) initializeApp();
 const db = getFirestore();
@@ -16,12 +17,31 @@ function needAuth(req) {
   return req.auth.uid;
 }
 
+// Wraps a callable so that every failure reaches the app as a clean, readable error.
+// Expected problems (HttpsError) pass through unchanged. Anything unexpected is logged in full
+// (visible in Cloud Logging) and the user only sees a friendly message, never internal details.
+const safe = (name, fn) => async (req) => {
+  try {
+    return await fn(req);
+  } catch (e) {
+    if (e instanceof HttpsError) throw e;
+    logger.error(`callable ${name} failed`, { uid: req.auth && req.auth.uid, error: String(e && e.stack ? e.stack : e) });
+    throw new HttpsError('internal', 'Something went wrong. Please try again.');
+  }
+};
+
+// callable('name', handler) or callable('name', options, handler): onCall + safe() in one step.
+const callable = (name, a, b) => {
+  const { onCall } = require('firebase-functions/v2/https');
+  return b ? onCall(a, safe(name, b)) : onCall(safe(name, a));
+};
+
 // In-app activity feed: notifications/{uid}/items/{id}. A fixed id means repeats (like, unlike, like) never duplicate.
 async function notify(uid, id, data) {
   try {
     await db.doc(`notifications/${uid}/items/${id}`).set({ ...data, read: false, createdAt: FieldValue.serverTimestamp() });
   } catch (e) {
-    console.error('notify failed', e);
+    logger.error('notify failed', { error: String(e) });
   }
 }
 
@@ -39,7 +59,7 @@ async function push(uids, { title, body, data }) {
       });
     }
   } catch (e) {
-    console.error('push failed', e); // a failed notification must never break the main job
+    logger.error('push failed', { error: String(e) }); // a failed notification must never break the main job
   }
 }
 
@@ -56,4 +76,4 @@ async function rateLimit(uid, key, max, windowSec) {
   });
 }
 
-module.exports = { db, REGION, profileOf, needAuth, push, rateLimit, notify };
+module.exports = { db, REGION, profileOf, needAuth, push, rateLimit, notify, safe, callable, logger };

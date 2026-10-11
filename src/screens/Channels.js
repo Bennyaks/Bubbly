@@ -1,17 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList } from 'react-native';
-import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { View, Text, TextInput, TouchableOpacity, FlatList, Alert } from 'react-native';
 import { s, C } from '../ui';
+import { friendlyError } from '../errors';
+import { watchChannels, createChannel, toggleMembership, watchChannelPosts, postToChannel } from '../services/channels';
 
 function ChannelView({ channel, user, onBack }) {
-  const [posts, setPosts] = useState([]); const [text, setText] = useState('');
+  const [posts, setPosts] = useState([]);
+  const [text, setText] = useState('');
   const owner = channel.ownerUid === user.uid;
-  useEffect(() => onSnapshot(query(collection(db, 'channels', channel.id, 'posts'), orderBy('createdAt', 'asc')),
-    (sn) => setPosts(sn.docs.map((d) => ({ id: d.id, ...d.data() })))), [channel.id]);
+  useEffect(() => watchChannelPosts(channel.id, setPosts), [channel.id]);
   const send = async () => {
-    const t = text.trim(); if (!t) return; setText('');
-    await addDoc(collection(db, 'channels', channel.id, 'posts'), { text: t, createdAt: serverTimestamp() });
+    const t = text.trim();
+    if (!t) return;
+    setText('');
+    try { await postToChannel(channel.id, t); } catch (e) { setText(t); Alert.alert('Not posted', friendlyError(e)); }
   };
   return (
     <View style={s.page}>
@@ -30,14 +32,17 @@ function ChannelView({ channel, user, onBack }) {
 }
 
 export default function Channels({ user }) {
-  const [list, setList] = useState([]); const [open, setOpen] = useState(null); const [name, setName] = useState('');
-  useEffect(() => onSnapshot(query(collection(db, 'channels'), orderBy('createdAt', 'desc')),
-    (sn) => setList(sn.docs.map((d) => ({ id: d.id, ...d.data() })))), []);
+  const [list, setList] = useState([]);
+  const [open, setOpen] = useState(null);
+  const [name, setName] = useState('');
+  useEffect(() => watchChannels(setList), []);
   const create = async () => {
-    const n = name.trim(); if (!n) return; setName('');
-    await addDoc(collection(db, 'channels'), { name: n, ownerUid: user.uid, members: [user.uid], createdAt: serverTimestamp() });
+    const n = name.trim();
+    if (!n) return;
+    setName('');
+    try { await createChannel(user.uid, n); } catch (e) { setName(n); Alert.alert('Could not create channel', friendlyError(e)); }
   };
-  const toggle = (c) => updateDoc(doc(db, 'channels', c.id), { members: (c.members || []).includes(user.uid) ? arrayRemove(user.uid) : arrayUnion(user.uid) });
+  const toggle = (c) => toggleMembership(c, user.uid).catch((e) => Alert.alert('Could not update', friendlyError(e)));
   const current = open && list.find((c) => c.id === open);
   if (current) return <ChannelView channel={current} user={user} onBack={() => setOpen(null)} />;
   return (

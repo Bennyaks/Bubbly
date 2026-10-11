@@ -1,1 +1,7 @@
-{ "projects": { "default": "bubbly-bfef3" } }
+{
+  "projects": {
+    "default": "bubbly-bfef3",
+    "dev": "bubbly-bfef3",
+    "prod": "REPLACE-WITH-YOUR-PRODUCTION-PROJECT-ID"
+  }
+}

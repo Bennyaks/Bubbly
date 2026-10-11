@@ -2,10 +2,8 @@ import React, { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, StatusBar, BackHandler,
 } from 'react-native';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
-import { collection, onSnapshot, query, where, doc, deleteDoc, limit } from 'firebase/firestore';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { auth, db, checkBackend } from './firebase';
+import { checkBackend } from './firebase';
 import { NavContext } from './src/nav';
 import { s, C, Logo, Avatar } from './src/ui';
 import ClaimUsername from './src/screens/ClaimUsername';
@@ -19,6 +17,14 @@ import UserProfile from './src/screens/UserProfile';
 import Settings from './src/screens/Settings';
 import Viewer from './src/screens/Viewer';
 import Upload from './src/screens/Upload';
+import OfflineBanner from './src/components/OfflineBanner';
+import { friendlyError } from './src/errors';
+import { emailProblem } from './src/validation';
+import { watchAuth, signIn, signUp, resetPassword } from './src/services/auth';
+import { watchProfile } from './src/services/profiles';
+import { watchMyPosts, deleteByRef } from './src/services/posts';
+import { watchChats } from './src/services/chats';
+import { watchUnreadActivity } from './src/services/notifications';
 
 function AuthScreen() {
   const [email, setEmail] = useState('');
@@ -27,11 +33,22 @@ function AuthScreen() {
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     setBusy(true);
+    const bad = emailProblem(email);
+    if (bad) { Alert.alert('Check your email', bad); setBusy(false); return; }
     try {
-      if (mode === 'in') await signInWithEmailAndPassword(auth, email.trim(), pass);
-      else await createUserWithEmailAndPassword(auth, email.trim(), pass);
-    } catch (e) { Alert.alert('Could not continue', e.message); }
+      if (mode === 'in') await signIn(email, pass);
+      else await signUp(email, pass);
+    } catch (e) { Alert.alert('Could not continue', friendlyError(e)); }
     setBusy(false);
+  };
+  const forgot = async () => {
+    const bad = emailProblem(email);
+    if (bad) return Alert.alert('Enter your email first', 'Type your email address above, then tap "Forgot password?" again.');
+    try {
+      await resetPassword(email);
+      // the same message whether or not the account exists, so nobody can use this to look people up
+      Alert.alert('Check your email', 'If an account exists for that address, we sent a link to reset the password.');
+    } catch (e) { Alert.alert('Could not send', friendlyError(e)); }
   };
   return (
     <View style={s.center}>
@@ -41,6 +58,7 @@ function AuthScreen() {
       <TouchableOpacity style={s.btn} onPress={submit} disabled={busy}>
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={s.btnTx}>{mode === 'in' ? 'Log in' : 'Create account'}</Text>}
       </TouchableOpacity>
+      {mode === 'in' ? <TouchableOpacity onPress={forgot}><Text style={s.link}>Forgot password?</Text></TouchableOpacity> : null}
       <TouchableOpacity onPress={() => setMode(mode === 'in' ? 'up' : 'in')}>
         <Text style={s.link}>{mode === 'in' ? 'New here? Create an account' : 'Have an account? Log in'}</Text>
       </TouchableOpacity>
@@ -70,26 +88,21 @@ function Main({ user }) {
   const [unreadChats, setUnreadChats] = useState(0);
   const [unreadActs, setUnreadActs] = useState(0);
 
-  useEffect(() => onSnapshot(doc(db, 'profiles', user.uid), (d) => setProfile(d.exists() ? d.data() : null)), [user.uid]);
+  useEffect(() => watchProfile(user.uid, setProfile, () => setProfile(null)), [user.uid]);
 
   // Tell the user when their video finished processing or failed (and clear failed ones).
-  useEffect(() => onSnapshot(query(collection(db, 'posts'), where('uid', '==', user.uid)), (sn) => {
-    sn.docChanges().forEach((c) => {
-      const p = c.doc.data();
-      if (p.status === 'failed') {
-        Alert.alert('Video not posted', p.error || 'Processing failed. Please try another video.');
-        deleteDoc(c.doc.ref).catch(() => {});
-      } else if (c.type === 'modified' && p.status === 'ready') {
-        Alert.alert('Your video is live 🎉', 'It is now in the feed.');
-      }
-    });
-  }, (e) => console.warn('my posts', e.message)), [user.uid]);
+  useEffect(() => watchMyPosts(user.uid, (type, ref, p) => {
+    if (p.status === 'failed') {
+      Alert.alert('Video not posted', p.error || 'Processing failed. Please try another video.');
+      deleteByRef(ref).catch(() => {});
+    } else if (type === 'modified' && p.status === 'ready') {
+      Alert.alert('Your video is live 🎉', 'It is now in the feed.');
+    }
+  }), [user.uid]);
 
   // Inbox badge = chats with unread messages + unread activity
-  useEffect(() => onSnapshot(query(collection(db, 'chats'), where('members', 'array-contains', user.uid)),
-    (sn) => setUnreadChats(sn.docs.filter((d) => ((d.data().unread || {})[user.uid] || 0) > 0).length)), [user.uid]);
-  useEffect(() => onSnapshot(query(collection(db, 'notifications', user.uid, 'items'), where('read', '==', false), limit(50)),
-    (sn) => setUnreadActs(sn.size), () => {}), [user.uid]);
+  useEffect(() => watchChats(user.uid, (chats) => setUnreadChats(chats.filter((c) => ((c.unread || {})[user.uid] || 0) > 0).length)), [user.uid]);
+  useEffect(() => watchUnreadActivity(user.uid, setUnreadActs), [user.uid]);
 
   // Android back button: close the top screen, then return to Home
   useEffect(() => {
@@ -142,6 +155,7 @@ function Main({ user }) {
   return (
     <NavContext.Provider value={nav}>
       <View style={{ flex: 1, backgroundColor: C.ink }}>
+        <OfflineBanner />
         {tab !== 'home' && header(false)}
         <View style={{ flex: 1 }} onLayout={(e) => setH(e.nativeEvent.layout.height)}>
           {tab === 'home' && <Feed height={h} />}
@@ -164,7 +178,7 @@ function Main({ user }) {
 
 export default function App() {
   const [user, setUser] = useState(undefined);
-  useEffect(() => onAuthStateChanged(auth, setUser), []);
+  useEffect(() => watchAuth(setUser), []);
   useEffect(() => {
     checkBackend().then((r) => {
       if (!r.ok) {

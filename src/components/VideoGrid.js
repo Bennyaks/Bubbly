@@ -4,13 +4,13 @@ import { thumbSrc } from '../../firebase';
 import { s, C } from '../ui';
 
 // 3-column grid of video thumbnails. Tapping one calls onOpen(index).
-export default function VideoGrid({ posts, onOpen, header, empty }) {
+export default function VideoGrid({ posts, onOpen, header, empty, onEnd }) {
   const { width } = useWindowDimensions();
   const size = (width - 8 * 2 - 4 * 2) / 3;
   return (
     <FlatList
       data={posts} numColumns={3} keyExtractor={(p) => p.id}
-      ListHeaderComponent={header}
+      ListHeaderComponent={header} onEndReached={onEnd} onEndReachedThreshold={1.5}
       ListEmptyComponent={<Text style={[s.mist, { textAlign: 'center', marginTop: 20 }]}>{empty || 'No videos yet.'}</Text>}
       contentContainerStyle={{ paddingHorizontal: 8, paddingBottom: 40 }}
       renderItem={({ item, index }) => (

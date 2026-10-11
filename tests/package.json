@@ -1,0 +1,9 @@
+{
+  "name": "bubbly-security-tests",
+  "private": true,
+  "description": "Security rule tests. Kept separate so the app's own Firebase version is not affected. Run: npm run test:rules (from the project folder)",
+  "dependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.0.0"
+  }
+}

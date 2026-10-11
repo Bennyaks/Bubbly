@@ -12,7 +12,22 @@ import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 
-const firebaseConfig = {
+// Which backend this build talks to:
+//   dev  (default): your development project, usually through the local emulators
+//   prod: the real production project. Set EXPO_PUBLIC_APP_ENV=prod when building the release.
+export const APP_ENV = process.env.EXPO_PUBLIC_APP_ENV === 'prod' ? 'prod' : 'dev';
+
+// Fill these in from Firebase console > Project settings > Your apps (web app) of the PRODUCTION project.
+const PROD_CONFIG = {
+  apiKey: 'REPLACE_ME',
+  authDomain: 'REPLACE_ME.firebaseapp.com',
+  projectId: 'REPLACE_ME',
+  storageBucket: 'REPLACE_ME.firebasestorage.app',
+  messagingSenderId: 'REPLACE_ME',
+  appId: 'REPLACE_ME',
+};
+
+const DEV_CONFIG = {
   apiKey: 'AIzaSyCincUjqkLmre1ba_79qWAc18WLFcOkVFU',
   authDomain: 'bubbly-bfef3.firebaseapp.com',
   projectId: 'bubbly-bfef3',
@@ -21,6 +36,11 @@ const firebaseConfig = {
   appId: '1:1037342288280:web:cc90128bb8a6eb72b2e3ed',
   measurementId: 'G-J40V8493BH',
 };
+
+const firebaseConfig = APP_ENV === 'prod' ? PROD_CONFIG : DEV_CONFIG;
+if (APP_ENV === 'prod' && PROD_CONFIG.apiKey === 'REPLACE_ME') {
+  throw new Error('Production Firebase settings are not filled in yet. Edit PROD_CONFIG in firebase.js.');
+}
 
 const app = initializeApp(firebaseConfig);
 
@@ -39,7 +59,7 @@ export default app;
 export const functions = getFunctions(app, 'us-central1'); // use the same REGION as functions/lib.js
 
 // ---- Local development with the Firebase Emulator Suite (free, runs on your laptop) ----
-export const USE_EMULATOR = true;   // set to false to use the real Firebase project
+export const USE_EMULATOR = APP_ENV === 'dev' && process.env.EXPO_PUBLIC_USE_EMULATOR !== 'false'; // dev builds use the emulators
 const EMULATOR_HOST_OVERRIDE = '';  // leave empty: the laptop's address is detected automatically.
                                     // Only fill this in (e.g. '192.168.1.23') if detection fails, e.g. in tunnel mode.
 

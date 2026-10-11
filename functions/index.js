@@ -1,7 +1,6 @@
 const os = require('os');
 const path = require('path');
 const fs = require('fs/promises');
-const { spawn } = require('child_process');
 const { randomUUID } = require('crypto');
 const ffmpegPath = require('ffmpeg-static');
 
@@ -11,17 +10,18 @@ const { getAuth } = require('firebase-admin/auth');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { onDocumentCreated, onDocumentDeleted } = require('firebase-functions/v2/firestore');
 const { onObjectFinalized } = require('firebase-functions/v2/storage');
-const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
+const { onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 
-const { db, REGION, profileOf, needAuth, push, rateLimit, notify } = require('./lib');
+const { db, REGION, profileOf, needAuth, push, rateLimit, notify, callable, logger } = require('./lib');
+const { milestone, extractHashtags, rankScore, videoProblem } = require('./logic');
+const { run, videoDuration } = require('./video');
 setGlobalOptions({ region: REGION, maxInstances: 20 });
 
 // Live rooms (chat, viewers, heartbeat). Video transport needs LiveKit: see docs/LIVE.md
 Object.assign(exports, require('./live'));
 
 const ignore = () => {}; // counters must not crash if the target was deleted
-const milestone = (n) => n === 1 || n === 10 || n === 50 || /^[1-9]0{2,}$/.test(String(n));
 
 // =====================================================================
 // 1. VIDEO PIPELINE (TikTok)
@@ -29,28 +29,6 @@ const milestone = (n) => n === 1 || n === 10 || n === 50 || /^[1-9]0{2,}$/.test(
 // videos/{uid}/{id}.mp4. This trigger validates it, makes a thumbnail,
 // then flips the post to "ready" so it can appear in feeds.
 // =====================================================================
-const run = (args) => new Promise((resolve) => {
-  let err = '';
-  let p;
-  try { p = spawn(ffmpegPath, args); } catch (e) { return resolve({ code: -1, err: String(e) }); }
-  p.stderr.on('data', (d) => { err += d; });
-  p.on('error', (e) => resolve({ code: -1, err: String(e) })); // e.g. ffmpeg binary missing
-  p.on('close', (code) => resolve({ code, err }));
-});
-
-const secs = (m) => +m[1] * 3600 + +m[2] * 60 + parseFloat(m[3]);
-// Reads the length of a video. Tries the header first, then falls back to scanning the file.
-async function videoDuration(file) {
-  const probe = await run(['-i', file]); // exits non-zero by design; info is printed on stderr
-  const d = /Duration: (\d+):(\d+):(\d+\.?\d*)/.exec(probe.err);
-  if (d && secs(d) > 0) return { dur: secs(d), detail: '' };
-  const scan = await run(['-i', file, '-c', 'copy', '-f', 'null', '-']);
-  const times = [...scan.err.replace(/\r/g, '\n').matchAll(/time=(\d+):(\d+):(\d+\.?\d*)/g)];
-  if (times.length) return { dur: secs(times[times.length - 1]), detail: '' };
-  const lines = (scan.err || probe.err).split('\n').map((x) => x.trim()).filter(Boolean);
-  return { dur: 0, detail: lines.slice(-2).join(' | ') };
-}
-
 exports.onVideoUploaded = onObjectFinalized({ memory: '1GiB', timeoutSeconds: 300 }, async (event) => {
   const obj = event.data;
   const m = obj.name.match(/^videos\/([^/]+)\/([^/.]+)\.mp4$/);
@@ -67,21 +45,20 @@ exports.onVideoUploaded = onObjectFinalized({ memory: '1GiB', timeoutSeconds: 30
   try {
     await bucket.file(obj.name).download({ destination: src });
     const bytes = (await fs.stat(src)).size;
-    console.log(`video ${postId}: storage says ${obj.size} bytes, downloaded ${bytes} bytes`);
-    if (bytes < 1024) {
+    logger.info(`video ${postId}: storage says ${obj.size} bytes, downloaded ${bytes} bytes`);
+    let dur = 0;
+    if (bytes >= 1024) {
+      const r = await videoDuration(ffmpegPath, src);
+      dur = r.dur;
+      if (!dur) logger.error(`video ${postId} unreadable (${bytes} bytes): ${r.detail}`);
+    } else {
       const buf = await fs.readFile(src);
-      const text = JSON.stringify(buf.toString('utf8')).slice(0, 80);
-      console.error(`video ${postId} tiny file content: text=${text} hex=${buf.toString('hex').slice(0, 80)}`);
-      throw new Error(`The upload arrived incomplete (${bytes} bytes, content ${text}).`);
+      logger.error(`video ${postId} tiny file content`, { text: JSON.stringify(buf.toString('utf8')).slice(0, 80), hex: buf.toString('hex').slice(0, 80) });
     }
-    const { dur, detail } = await videoDuration(src);
-    if (!dur) {
-      console.error(`video ${postId} unreadable (${bytes} bytes): ${detail}`);
-      throw new Error(`Video could not be read (${bytes} bytes). ${detail}`.slice(0, 200));
-    }
-    if (dur > 600) throw new Error('Video is longer than 10 minutes.');
+    const problem = videoProblem(bytes, dur);
+    if (problem) throw new Error(problem);
 
-    const t = await run(['-y', '-ss', String(Math.min(1, dur / 2)), '-i', src, '-frames:v', '1', '-vf', 'scale=480:-2', thumb]);
+    const t = await run(ffmpegPath, ['-y', '-ss', String(Math.min(1, dur / 2)), '-i', src, '-frames:v', '1', '-vf', 'scale=480:-2', thumb]);
     if (t.code !== 0) throw new Error('Could not create thumbnail.');
 
     const thumbPath = `thumbs/${uid}/${postId}.jpg`;
@@ -97,7 +74,7 @@ exports.onVideoUploaded = onObjectFinalized({ memory: '1GiB', timeoutSeconds: 30
     // Full URLs are only written in production, where the address never changes.
     const url = (p, tok) => `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(p)}?alt=media&token=${tok}`;
     const emulator = process.env.FUNCTIONS_EMULATOR === 'true';
-    const tags = [...new Set((post.caption || '').toLowerCase().match(/#[\p{L}\p{N}_]+/gu) || [])].map((x) => x.slice(1)).slice(0, 10);
+    const tags = extractHashtags(post.caption);
 
     await postRef.update({
       status: 'ready',
@@ -107,7 +84,7 @@ exports.onVideoUploaded = onObjectFinalized({ memory: '1GiB', timeoutSeconds: 30
     });
     await db.doc(`profiles/${uid}`).update({ videoCount: FieldValue.increment(1) }).catch(ignore);
   } catch (e) {
-    console.error(`video ${postId} failed:`, e.message);
+    logger.error(`video ${postId} failed`, { error: e.message });
     await postRef.update({ status: 'failed', error: String(e.message).slice(0, 200) }).catch(ignore);
     await bucket.file(obj.name).delete().catch(ignore);
   } finally {
@@ -211,11 +188,7 @@ async function rankAll() {
   for (const d of snap.docs) {
     const p = d.data();
     const ageH = Math.max(0, (now - (p.createdAt ? p.createdAt.toMillis() : now)) / 36e5);
-    const views = p.viewCount || 0;
-    const completion = views ? (p.completeCount || 0) / views : 0;
-    const engagement = (p.likeCount || 0) + 3 * (p.commentCount || 0) + 5 * (p.shareCount || 0) + 0.1 * views + 20 * completion;
-    const boost = views < 200 && ageH < 24 ? 10 : 0;
-    batch.update(d.ref, { score: Math.round(((engagement + boost + 1) / Math.pow(ageH + 2, 1.5)) * 1e4) / 1e4 });
+    batch.update(d.ref, { score: rankScore(p, now) });
     if (++n % 400 === 0) { await batch.commit(); batch = db.batch(); }
     if (ageH <= 24) (p.hashtags || []).forEach((t) => { tagScore[t] = (tagScore[t] || 0) + 1 + 0.1 * (p.likeCount || 0); });
   }
@@ -234,7 +207,7 @@ exports.rankFeedNow = onRequest(async (req, res) => {
 });
 
 // One count per user per video; "completed" upgrades an existing view.
-exports.recordView = onCall(async (req) => {
+exports.recordView = callable('recordView', async (req) => {
   const uid = needAuth(req);
   const { postId, completed } = req.data || {};
   if (typeof postId !== 'string' || !postId) throw new HttpsError('invalid-argument', 'postId required');
@@ -255,7 +228,7 @@ exports.recordView = onCall(async (req) => {
 // =====================================================================
 // 5. DISCOVERY: user search by username prefix
 // =====================================================================
-exports.searchUsers = onCall(async (req) => {
+exports.searchUsers = callable('searchUsers', async (req) => {
   needAuth(req);
   const q = String((req.data || {}).q || '').trim().toLowerCase().replace(/^@/, '');
   if (q.length < 2 || q.length > 20) return { users: [] };
@@ -266,7 +239,7 @@ exports.searchUsers = onCall(async (req) => {
 // =====================================================================
 // 6. PUSH TOKENS
 // =====================================================================
-exports.registerPushToken = onCall(async (req) => {
+exports.registerPushToken = callable('registerPushToken', async (req) => {
   const uid = needAuth(req);
   const { token, remove } = req.data || {};
   if (typeof token !== 'string' || !/^Expo(nent)?PushToken\[.+\]$/.test(token)) throw new HttpsError('invalid-argument', 'Bad push token');
@@ -279,7 +252,7 @@ exports.registerPushToken = onCall(async (req) => {
 // 7. MODERATION: reports hide content automatically at 5 distinct reports
 // (a human review queue/admin dashboard is a later stage)
 // =====================================================================
-exports.reportContent = onCall(async (req) => {
+exports.reportContent = callable('reportContent', async (req) => {
   const uid = needAuth(req);
   const { type, id, reason } = req.data || {};
   if (!['post', 'comment', 'user', 'message', 'channel'].includes(type) || typeof id !== 'string' || !id) throw new HttpsError('invalid-argument', 'Bad report');
@@ -303,7 +276,7 @@ exports.onReportCreated = onDocumentCreated('reports/{rid}', async (e) => {
 // =====================================================================
 
 // One share counted per user per video.
-exports.recordShare = onCall(async (req) => {
+exports.recordShare = callable('recordShare', async (req) => {
   const uid = needAuth(req);
   const { postId } = req.data || {};
   if (typeof postId !== 'string' || !postId) throw new HttpsError('invalid-argument', 'postId required');
@@ -327,7 +300,7 @@ async function loadGroup(chatId, uid) {
   return { ref, chat };
 }
 
-exports.addGroupMembers = onCall(async (req) => {
+exports.addGroupMembers = callable('addGroupMembers', async (req) => {
   const uid = needAuth(req);
   const { chatId, usernames } = req.data || {};
   const { ref, chat } = await loadGroup(chatId, uid);
@@ -348,7 +321,7 @@ exports.addGroupMembers = onCall(async (req) => {
   return { added: Object.values(add) };
 });
 
-exports.leaveGroup = onCall(async (req) => {
+exports.leaveGroup = callable('leaveGroup', async (req) => {
   const uid = needAuth(req);
   const { ref, chat } = await loadGroup((req.data || {}).chatId, uid);
   const rest = chat.members.filter((m) => m !== uid);
@@ -387,22 +360,60 @@ exports.cleanupNow = onRequest(async (req, res) => { // emulator only, like rank
 // =====================================================================
 // 8. ACCOUNT DELETION (required by Google Play and the App Store)
 // =====================================================================
-exports.deleteMyAccount = onCall({ timeoutSeconds: 300, memory: '512MiB' }, async (req) => {
+exports.deleteMyAccount = callable('deleteMyAccount', { timeoutSeconds: 300, memory: '512MiB' }, async (req) => {
   const uid = needAuth(req);
   const prof = (await db.doc(`profiles/${uid}`).get()).data();
   const bucket = getStorage().bucket();
+
+  // 1. end any live they are hosting
+  const lives = await db.collection('lives').where('hostUid', '==', uid).where('status', '==', 'live').get();
+  await Promise.all(lives.docs.map((d) => d.ref.update({ status: 'ended', endedAt: FieldValue.serverTimestamp() })));
+
+  // 2. their videos (with the likes and comments under them) and the files
   const posts = await db.collection('posts').where('uid', '==', uid).get();
   for (const d of posts.docs) await db.recursiveDelete(d.ref);
   await bucket.deleteFiles({ prefix: `videos/${uid}/` }).catch(ignore);
   await bucket.deleteFiles({ prefix: `thumbs/${uid}/` }).catch(ignore);
+
+  // 3. their comments on other people's videos (onCommentDeleted keeps those counters right)
+  const comments = await db.collectionGroup('comments').where('uid', '==', uid).get();
+  await Promise.all(comments.docs.map((d) => d.ref.delete().catch(ignore)));
+
+  // 4. follows in both directions
   for (const field of ['follower', 'followee']) {
     const f = await db.collection('follows').where(field, '==', uid).get();
     await Promise.all(f.docs.map((x) => x.ref.delete()));
   }
+
+  // 5. groups: leave each one (ownership passes on, empty groups are deleted). Direct chats stay for the other person.
+  const chats = await db.collection('chats').where('members', 'array-contains', uid).get();
+  for (const d of chats.docs) {
+    const c = d.data();
+    if (c.type !== 'group') continue;
+    const rest = c.members.filter((m) => m !== uid);
+    if (!rest.length) { await db.recursiveDelete(d.ref); continue; }
+    const upd = {
+      members: FieldValue.arrayRemove(uid), [`names.${uid}`]: FieldValue.delete(),
+      [`unread.${uid}`]: FieldValue.delete(), [`lastRead.${uid}`]: FieldValue.delete(),
+    };
+    if (c.ownerUid === uid) upd.ownerUid = rest[0];
+    await d.ref.update(upd);
+  }
+
+  // 6. channels: delete the ones they own, leave the ones they joined
+  const owned = await db.collection('channels').where('ownerUid', '==', uid).get();
+  for (const d of owned.docs) await db.recursiveDelete(d.ref);
+  const joined = await db.collection('channels').where('members', 'array-contains', uid).get();
+  await Promise.all(joined.docs.map((d) => d.ref.update({ members: FieldValue.arrayRemove(uid) }).catch(ignore)));
+
+  // 7. private data, profile, username, and finally the login itself
   await db.recursiveDelete(db.doc(`users/${uid}`));
+  await db.recursiveDelete(db.doc(`notifications/${uid}`));
+  await db.recursiveDelete(db.doc(`blocks/${uid}`));
   await db.doc(`pushTokens/${uid}`).delete();
   await db.doc(`profiles/${uid}`).delete();
   if (prof && prof.username) await db.doc(`usernames/${prof.username}`).delete();
   await getAuth().deleteUser(uid);
+  logger.info('account deleted', { uid });
   return { ok: true };
 });

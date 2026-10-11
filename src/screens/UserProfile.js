@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert } from 'react-native';
-import { collection, doc, onSnapshot, query, where, orderBy, limit, updateDoc } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../firebase';
 import { useNav } from '../nav';
 import { s, C, Avatar, Overlay } from '../ui';
 import FollowButton from '../components/FollowButton';
 import VideoGrid from '../components/VideoGrid';
-import { startDirectChat } from './Chats';
+import { friendlyError } from '../errors';
+import { watchProfile, updateProfile } from '../services/profiles';
+import { watchUserPosts } from '../services/posts';
+import { startDirectChat } from '../services/chats';
+import { reportContent } from '../services/account';
 
 const fmt = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n || 0));
 
@@ -20,13 +21,10 @@ export default function UserProfile({ uid }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
   const [bio, setBio] = useState('');
+  const [count, setCount] = useState(30);
 
-  useEffect(() => onSnapshot(doc(db, 'profiles', uid), (d) => setProfile(d.exists() ? d.data() : null)), [uid]);
-  useEffect(() => onSnapshot(
-    query(collection(db, 'posts'), where('uid', '==', uid), where('status', '==', 'ready'), orderBy('createdAt', 'desc'), limit(60)),
-    (sn) => setPosts(sn.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    (e) => console.warn('profile videos', e.message),
-  ), [uid]);
+  useEffect(() => watchProfile(uid, setProfile, () => setProfile(null)), [uid]);
+  useEffect(() => watchUserPosts(uid, count, setPosts), [uid, count]);
 
   if (profile === undefined) return <Overlay title="Profile" onBack={pop}><Text style={[s.mist, { padding: 16 }]}>Loading…</Text></Overlay>;
   if (profile === null) return <Overlay title="Profile" onBack={pop}><Text style={[s.mist, { padding: 16 }]}>This person no longer exists.</Text></Overlay>;
@@ -34,16 +32,16 @@ export default function UserProfile({ uid }) {
   const likes = posts.reduce((n, p) => n + (p.likeCount || 0), 0);
   const startEdit = () => { setName(profile.displayName || ''); setBio(profile.bio || ''); setEditing(true); };
   const saveEdit = async () => {
-    try { await updateDoc(doc(db, 'profiles', me.uid), { displayName: name.trim(), bio: bio.trim() }); setEditing(false); }
-    catch (e) { Alert.alert('Could not save', e.message); }
+    try { await updateProfile(me.uid, { displayName: name, bio }); setEditing(false); }
+    catch (e) { Alert.alert('Could not save', friendlyError(e)); }
   };
   const message = async () => {
-    try { openChat(await startDirectChat(me, uid, profile.username)); } catch (e) { Alert.alert('Could not open chat', e.message); }
+    try { openChat(await startDirectChat(me, uid, profile.username)); } catch (e) { Alert.alert('Could not open chat', friendlyError(e)); }
   };
   const report = () => Alert.alert('Report this person?', 'Our team reviews reports. Videos with several reports are hidden automatically.', [
     { text: 'Cancel', style: 'cancel' },
-    { text: 'Report', style: 'destructive', onPress: () => httpsCallable(functions, 'reportContent')({ type: 'user', id: uid, reason: 'reported from profile' })
-      .then(() => Alert.alert('Thanks', 'We received your report.')).catch((e) => Alert.alert('Could not report', e.message)) },
+    { text: 'Report', style: 'destructive', onPress: () => reportContent('user', uid, 'reported from profile')
+      .then(() => Alert.alert('Thanks', 'We received your report.')).catch((e) => Alert.alert('Could not report', friendlyError(e))) },
   ]);
 
   const stat = (n, label) => (
@@ -84,7 +82,7 @@ export default function UserProfile({ uid }) {
 
   return (
     <Overlay title={`@${profile.username}`} onBack={pop}>
-      <VideoGrid posts={posts} header={header} onOpen={(i) => openViewer(posts, i)} empty={mine ? 'You have not posted yet. Tap + to upload your first video.' : 'No videos yet.'} />
+      <VideoGrid posts={posts} header={header} onOpen={(i) => openViewer(posts, i)} onEnd={() => setCount((c) => (posts.length >= c ? Math.min(c + 30, 300) : c))} empty={mine ? 'You have not posted yet. Tap + to upload your first video.' : 'No videos yet.'} />
     </Overlay>
   );
 }

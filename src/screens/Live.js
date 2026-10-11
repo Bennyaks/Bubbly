@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Alert, KeyboardAvoidingView } from 'react-native';
-import {
-  collection, doc, onSnapshot, query, where, orderBy, limit, addDoc, setDoc, deleteDoc, serverTimestamp,
-} from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../firebase';
 import { useNav } from '../nav';
 import { s, C, Avatar, Overlay } from '../ui';
+import { friendlyError } from '../errors';
+import {
+  watchLives, watchLive, watchLiveMessages, sendLiveMessage, joinPresence, startLive, heartbeat, endLive as endLiveCall,
+} from '../services/lives';
 
 // ---------------- Live tab: who is live + Go live ----------------
 export default function LiveHub() {
@@ -16,20 +15,16 @@ export default function LiveHub() {
   const [form, setForm] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => onSnapshot(
-    query(collection(db, 'lives'), where('status', '==', 'live'), orderBy('startedAt', 'desc'), limit(30)),
-    (sn) => setLives(sn.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    (e) => console.warn('lives', e.message),
-  ), []);
+  useEffect(() => watchLives(setLives), []);
 
   const start = async () => {
     if (!title.trim()) return Alert.alert('Give your live a title');
     setBusy(true);
     try {
-      const r = await httpsCallable(functions, 'startLive')({ title: title.trim() });
+      const r = await startLive(title.trim());
       setTitle(''); setForm(false);
-      push('live', { liveId: r.data.liveId, host: true });
-    } catch (e) { Alert.alert('Could not go live', e.message); }
+      push('live', { liveId: r.liveId, host: true });
+    } catch (e) { Alert.alert('Could not go live', friendlyError(e)); }
     setBusy(false);
   };
 
@@ -73,31 +68,24 @@ export function LiveRoom({ liveId, host }) {
   const [msgs, setMsgs] = useState([]);
   const [text, setText] = useState('');
 
-  useEffect(() => onSnapshot(doc(db, 'lives', liveId),
-    (d) => setLive(d.exists() ? { id: d.id, ...d.data() } : null), () => setLive(null)), [liveId]);
-  useEffect(() => onSnapshot(
-    query(collection(db, 'lives', liveId, 'messages'), orderBy('createdAt', 'desc'), limit(60)),
-    (sn) => setMsgs(sn.docs.map((d) => ({ id: d.id, ...d.data() }))),
-  ), [liveId]);
+  useEffect(() => watchLive(liveId, setLive), [liveId]);
+  useEffect(() => watchLiveMessages(liveId, setMsgs), [liveId]);
 
   // viewers register their presence so the room can show how many are watching
   useEffect(() => {
     if (host) return undefined;
-    const ref = doc(db, 'lives', liveId, 'viewers', me.uid);
-    setDoc(ref, { at: serverTimestamp() }).catch(() => {});
-    return () => { deleteDoc(ref).catch(() => {}); };
+    return joinPresence(liveId, me.uid);
   }, [liveId, host, me.uid]);
 
   // the host's app tells the server it is still there; silence for 3 minutes closes the live
   useEffect(() => {
     if (!host) return undefined;
-    const beat = () => httpsCallable(functions, 'liveHeartbeat')({ liveId }).catch(() => {});
-    const t = setInterval(beat, 30000);
+    const t = setInterval(() => heartbeat(liveId), 30000);
     return () => clearInterval(t);
   }, [liveId, host]);
 
   const ended = live === null || (live && live.status !== 'live');
-  const endLive = () => httpsCallable(functions, 'endLive')({ liveId }).catch(() => {}).then(pop);
+  const endLive = () => endLiveCall(liveId).catch(() => {}).then(pop);
   const back = () => {
     if (host && !ended) {
       Alert.alert('End your live?', 'Leaving ends the live for everyone.', [
@@ -109,8 +97,8 @@ export function LiveRoom({ liveId, host }) {
     const t = text.trim();
     if (!t || ended) return;
     setText('');
-    try { await addDoc(collection(db, 'lives', liveId, 'messages'), { text: t, from: me.uid, fromName: me.username, createdAt: serverTimestamp() }); }
-    catch (e) { Alert.alert('Message not sent', e.message); }
+    try { await sendLiveMessage(liveId, me, t); }
+    catch (e) { setText(t); Alert.alert('Message not sent', friendlyError(e)); }
   };
 
   const title = live ? `@${live.hostName}` : 'Live';

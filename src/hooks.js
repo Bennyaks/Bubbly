@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { loadProfiles } from './services/profiles';
 
 // Loads public profiles ({username, followerCount, ...}) for a list of uids, caching what it has already fetched.
 export function useProfiles(uids) {
@@ -10,8 +9,8 @@ export function useProfiles(uids) {
     let alive = true;
     const need = uids.filter((u) => !map[u]).slice(0, 100);
     if (!need.length) return undefined;
-    Promise.all(need.map((u) => getDoc(doc(db, 'profiles', u)).then((d) => [u, d.exists() ? d.data() : { username: 'user' }])))
-      .then((pairs) => { if (alive) setMap((m) => ({ ...m, ...Object.fromEntries(pairs) })); })
+    loadProfiles(need)
+      .then((got) => { if (alive) setMap((m) => ({ ...m, ...got })); })
       .catch((e) => console.warn('profiles', e.message));
     return () => { alive = false; };
   }, [key]);

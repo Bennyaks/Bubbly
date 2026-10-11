@@ -10,10 +10,10 @@
 // for the emulator):  LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 // Before launching publicly, move the key and secret into Secret Manager (firebase functions:secrets:set).
 const { FieldValue, Timestamp } = require('firebase-admin/firestore');
-const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
+const { onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { onDocumentCreated, onDocumentDeleted } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
-const { db, profileOf, needAuth, push, notify, rateLimit } = require('./lib');
+const { db, profileOf, needAuth, push, notify, rateLimit, callable, logger } = require('./lib');
 
 const lk = () => ({ url: process.env.LIVEKIT_URL, key: process.env.LIVEKIT_API_KEY, secret: process.env.LIVEKIT_API_SECRET });
 const lkReady = () => { const c = lk(); return !!(c.url && c.key && c.secret); };
@@ -27,7 +27,7 @@ async function makeToken(identity, room, host) {
   return at.toJwt();
 }
 
-exports.startLive = onCall(async (req) => {
+exports.startLive = callable('startLive', async (req) => {
   const uid = needAuth(req);
   const title = String((req.data || {}).title || '').trim().slice(0, 80);
   if (!title) throw new HttpsError('invalid-argument', 'Give your live a title.');
@@ -44,7 +44,7 @@ exports.startLive = onCall(async (req) => {
   return { liveId: ref.id, url: lk().url || null, token: await makeToken(uid, ref.id, true) };
 });
 
-exports.joinLive = onCall(async (req) => {
+exports.joinLive = callable('joinLive', async (req) => {
   const uid = needAuth(req);
   const { liveId } = req.data || {};
   const live = typeof liveId === 'string' ? (await db.doc(`lives/${liveId}`).get()).data() : null;
@@ -53,7 +53,7 @@ exports.joinLive = onCall(async (req) => {
 });
 
 // The host app calls this every 30 seconds. A live with no heartbeat is closed automatically.
-exports.liveHeartbeat = onCall(async (req) => {
+exports.liveHeartbeat = callable('liveHeartbeat', async (req) => {
   const uid = needAuth(req);
   const { liveId } = req.data || {};
   const ref = db.doc(`lives/${liveId}`);
@@ -70,11 +70,11 @@ async function closeLive(liveId) {
       const { RoomServiceClient } = require('livekit-server-sdk');
       const c = lk();
       await new RoomServiceClient(c.url, c.key, c.secret).deleteRoom(liveId);
-    } catch (e) { console.warn('deleteRoom', e.message); }
+    } catch (e) { logger.warn('deleteRoom failed', { error: e.message }); }
   }
 }
 
-exports.endLive = onCall(async (req) => {
+exports.endLive = callable('endLive', async (req) => {
   const uid = needAuth(req);
   const { liveId } = req.data || {};
   const live = (await db.doc(`lives/${liveId}`).get()).data();

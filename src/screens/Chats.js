@@ -3,36 +3,21 @@ import {
   View, Text, TextInput, TouchableOpacity, FlatList, Modal, Alert, ActivityIndicator,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
-import {
-  collection, query, where, orderBy, onSnapshot, addDoc, setDoc, getDoc, getDocs, updateDoc, doc,
-  serverTimestamp, limit,
-} from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../firebase';
 import { useNav } from '../nav';
 import { s, C, Avatar, Segment, Overlay, timeAgo } from '../ui';
+import { friendlyError } from '../errors';
+import {
+  chatTitle, startDirectChat, startChatByUsernames, watchChats, watchChat, watchMessages, sendMessage, markRead,
+  watchChatPrefs, setChatPref, leaveGroup, addGroupMembers,
+} from '../services/chats';
+import { watchActivity, markActivityRead } from '../services/notifications';
+import { getPost } from '../services/posts';
 
+export { chatTitle, startDirectChat };
+
+const PAGE = 50; // messages loaded at a time
 const ms = (t) => (t && t.toMillis ? t.toMillis() : Date.now());
-const dmId = (a, b) => [a, b].sort().join('_');
 const clock = (t) => (t && t.toDate ? t.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
-
-export function chatTitle(c, uid) {
-  if (c.type === 'group') return c.title;
-  const other = c.members.find((m) => m !== uid);
-  return (c.names && c.names[other]) || 'Chat';
-}
-
-// Finds or creates the one-to-one chat between me and another person. Returns the chat id.
-export async function startDirectChat(me, otherUid, otherName) {
-  const id = dmId(me.uid, otherUid);
-  const existing = await getDoc(doc(db, 'chats', id));
-  if (!existing.exists()) {
-    await setDoc(doc(db, 'chats', id), {
-      type: 'direct', members: [me.uid, otherUid], names: { [me.uid]: me.username, [otherUid]: otherName }, createdAt: serverTimestamp(),
-    });
-  }
-  return id;
-}
 
 // ---------------- Group menu ----------------
 function GroupMenu({ chat, onClose, onLeft }) {
@@ -45,16 +30,16 @@ function GroupMenu({ chat, onClose, onLeft }) {
     if (!list.length) return;
     setBusy(true);
     try {
-      const r = await httpsCallable(functions, 'addGroupMembers')({ chatId: chat.id, usernames: list });
+      const r = await addGroupMembers(chat.id, list);
       setNames('');
-      Alert.alert('Added', r.data.added.length ? r.data.added.map((n) => `@${n}`).join(', ') : 'Everyone was already in the group.');
-    } catch (e) { Alert.alert('Could not add', e.message); }
+      Alert.alert('Added', r.added.length ? r.added.map((n) => `@${n}`).join(', ') : 'Everyone was already in the group.');
+    } catch (e) { Alert.alert('Could not add', friendlyError(e)); }
     setBusy(false);
   };
   const leave = () => Alert.alert('Leave this group?', 'You will stop receiving its messages.', [
     { text: 'Cancel', style: 'cancel' },
     { text: 'Leave', style: 'destructive', onPress: async () => {
-      try { await httpsCallable(functions, 'leaveGroup')({ chatId: chat.id }); onClose(); onLeft(); } catch (e) { Alert.alert('Could not leave', e.message); }
+      try { await leaveGroup(chat.id); onClose(); onLeft(); } catch (e) { Alert.alert('Could not leave', friendlyError(e)); }
     } },
   ]);
   return (
@@ -77,34 +62,34 @@ function GroupMenu({ chat, onClose, onLeft }) {
 function Room({ chat }) {
   const { me } = useNav();
   const [msgs, setMsgs] = useState([]);
+  const [count, setCount] = useState(PAGE);
   const [text, setText] = useState('');
   const list = useRef(null);
+  const loadingEarlier = useRef(false);
   const group = chat.type === 'group';
 
-  useEffect(() => onSnapshot(
-    query(collection(db, 'chats', chat.id, 'messages'), orderBy('createdAt', 'asc')),
-    (sn) => setMsgs(sn.docs.map((d) => ({ id: d.id, ...d.data() }))),
-  ), [chat.id]);
+  // newest `count` messages; "Load earlier messages" raises the count
+  useEffect(() => watchMessages(chat.id, count, setMsgs), [chat.id, count]);
 
   // mark as read whenever new messages arrive while the room is open
-  useEffect(() => {
-    updateDoc(doc(db, 'chats', chat.id), { [`lastRead.${me.uid}`]: serverTimestamp(), [`unread.${me.uid}`]: 0 }).catch(() => {});
-  }, [msgs.length]);
+  useEffect(() => { markRead(chat.id, me.uid); }, [msgs.length]);
 
   const send = async () => {
     const t = text.trim();
     if (!t) return;
     setText('');
     try {
-      await addDoc(collection(db, 'chats', chat.id, 'messages'), { text: t, from: me.uid, fromName: me.username, createdAt: serverTimestamp() });
-    } catch (e) { Alert.alert('Message not sent', e.message); }
+      await sendMessage(chat.id, me, t);
+    } catch (e) { setText(t); Alert.alert('Message not sent', friendlyError(e)); }
   };
+  const loadEarlier = () => { loadingEarlier.current = true; setCount((c) => c + PAGE); };
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, paddingHorizontal: 12 }} behavior="padding">
       <FlatList
         ref={list} data={msgs} keyExtractor={(m) => m.id} style={{ flex: 1 }}
-        onContentSizeChange={() => list.current?.scrollToEnd({ animated: true })}
+        onContentSizeChange={() => { if (loadingEarlier.current) { loadingEarlier.current = false; return; } list.current?.scrollToEnd({ animated: true }); }}
+        ListHeaderComponent={msgs.length >= count ? <TouchableOpacity onPress={loadEarlier}><Text style={s.link}>Load earlier messages</Text></TouchableOpacity> : null}
         ListEmptyComponent={<Text style={s.mist}>No messages yet. Say hi 👋</Text>}
         renderItem={({ item }) => {
           const mine = item.from === me.uid;
@@ -133,11 +118,7 @@ export function RoomScreen({ chatId }) {
   const { me, pop, openUser } = useNav();
   const [chat, setChat] = useState(undefined);
   const [menu, setMenu] = useState(false);
-  useEffect(() => onSnapshot(
-    doc(db, 'chats', chatId),
-    (d) => setChat(d.exists() ? { id: d.id, ...d.data() } : null),
-    () => setChat(null), // e.g. you just left the group
-  ), [chatId]);
+  useEffect(() => watchChat(chatId, setChat, () => setChat(null)), [chatId]); // an error here usually means you just left the group
 
   if (chat === undefined) return <Overlay title="Chat" onBack={pop}><ActivityIndicator color={C.lil} style={{ marginTop: 40 }} /></Overlay>;
   if (chat === null) return <Overlay title="Chat" onBack={pop}><Text style={[s.mist, { padding: 16 }]}>This chat is no longer available.</Text></Overlay>;
@@ -169,23 +150,8 @@ function NewChat({ onClose, onOpen }) {
     if (!group && list.length > 1) return Alert.alert('A direct chat has one person. Use a group for more.');
     setBusy(true);
     try {
-      const uids = {};
-      for (const n of list) {
-        const u = await getDoc(doc(db, 'usernames', n));
-        if (!u.exists()) throw new Error(`No user called @${n}`);
-        uids[u.data().uid] = n;
-      }
-      if (group) {
-        const members = [me.uid, ...Object.keys(uids)];
-        const r = await addDoc(collection(db, 'chats'), {
-          type: 'group', title: title.trim(), members, names: { [me.uid]: me.username, ...uids }, ownerUid: me.uid, createdAt: serverTimestamp(),
-        });
-        onOpen(r.id);
-      } else {
-        const [uid, name] = Object.entries(uids)[0];
-        onOpen(await startDirectChat(me, uid, name));
-      }
-    } catch (e) { Alert.alert('Could not start chat', e.message); }
+      onOpen(await startChatByUsernames(me, list, group ? title.trim() : ''));
+    } catch (e) { Alert.alert('Could not start chat', friendlyError(e)); }
     setBusy(false);
   };
 
@@ -213,15 +179,8 @@ function ChatList() {
   const [creating, setCreating] = useState(false);
   const [menu, setMenu] = useState(null);
 
-  useEffect(() => onSnapshot(
-    query(collection(db, 'chats'), where('members', 'array-contains', me.uid)),
-    (sn) => setChats(sn.docs.map((d) => ({ id: d.id, ...d.data() }))),
-  ), [me.uid]);
-  useEffect(() => onSnapshot(collection(db, 'users', me.uid, 'chatPrefs'), (sn) => {
-    const m = {};
-    sn.docs.forEach((d) => { m[d.id] = d.data(); });
-    setPrefs(m);
-  }), [me.uid]);
+  useEffect(() => watchChats(me.uid, setChats), [me.uid]);
+  useEffect(() => watchChatPrefs(me.uid, setPrefs), [me.uid]);
 
   const unreadOf = (c) => (c.unread || {})[me.uid] || 0;
   const p = (c) => prefs[c.id] || {};
@@ -237,10 +196,10 @@ function ChatList() {
     .sort((a, b) => (p(b).pinned ? 1 : 0) - (p(a).pinned ? 1 : 0)
       || ms((b.lastMessage || {}).at || b.createdAt) - ms((a.lastMessage || {}).at || a.createdAt));
 
-  const setPref = (c, patch) => setDoc(doc(db, 'users', me.uid, 'chatPrefs', c.id), patch, { merge: true });
+  const setPref = (c, patch) => setChatPref(me.uid, c.id, patch).catch((e) => Alert.alert('Could not update', friendlyError(e)));
   const leaveFromList = (c) => Alert.alert('Leave this group?', c.title, [
     { text: 'Cancel', style: 'cancel' },
-    { text: 'Leave', style: 'destructive', onPress: () => httpsCallable(functions, 'leaveGroup')({ chatId: c.id }).catch((e) => Alert.alert('Could not leave', e.message)) },
+    { text: 'Leave', style: 'destructive', onPress: () => leaveGroup(c.id).catch((e) => Alert.alert('Could not leave', friendlyError(e))) },
   ]);
 
   const chip = (id, label) => (
@@ -300,29 +259,29 @@ const ICON = { like: '💜', comment: '💬', follow: '👤', live: '🔴' };
 function Activity() {
   const { me, openUser, openViewer, push } = useNav();
   const [items, setItems] = useState([]);
-  useEffect(() => onSnapshot(
-    query(collection(db, 'notifications', me.uid, 'items'), orderBy('createdAt', 'desc'), limit(50)),
-    (sn) => setItems(sn.docs.map((d) => ({ id: d.id, ref: d.ref, ...d.data() }))),
-    (e) => console.warn('activity', e.message),
-  ), [me.uid]);
+  const [count, setCount] = useState(30);
+  useEffect(() => watchActivity(me.uid, count, setItems), [me.uid, count]);
 
   // opening the Activity tab marks everything as read
   useEffect(() => {
-    items.filter((i) => !i.read).forEach((i) => updateDoc(i.ref, { read: true }).catch(() => {}));
+    items.filter((i) => !i.read).forEach((i) => markActivityRead(i.ref));
   }, [items.length]);
 
   const open = async (i) => {
     if (i.type === 'follow') return openUser(i.fromUid);
     if (i.type === 'live') return push('live', { liveId: i.liveId, host: false });
-    const d = await getDoc(doc(db, 'posts', i.postId));
-    if (d.exists()) openViewer([{ id: d.id, ...d.data() }], 0);
-    else Alert.alert('Video not found', 'This video was removed.');
+    try {
+      const post = await getPost(i.postId);
+      if (post) openViewer([post], 0);
+      else Alert.alert('Video not found', 'This video was removed.');
+    } catch (e) { Alert.alert('Could not open', friendlyError(e)); }
   };
 
   return (
     <FlatList
       data={items} keyExtractor={(i) => i.id}
       ListEmptyComponent={<Text style={s.mist}>Nothing yet. Likes, comments, new followers and lives will show up here.</Text>}
+      ListFooterComponent={items.length >= count ? <TouchableOpacity onPress={() => setCount((c) => c + 30)}><Text style={s.link}>Load more</Text></TouchableOpacity> : null}
       renderItem={({ item }) => (
         <TouchableOpacity style={[s.row, !item.read && { borderWidth: 1, borderColor: C.vio }]} onPress={() => open(item)}>
           <Text style={{ fontSize: 24 }}>{ICON[item.type] || '🔔'}</Text>

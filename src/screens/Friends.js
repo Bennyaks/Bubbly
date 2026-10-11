@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, FlatList, Share, Alert } from 'react-native';
-import { collection, getDocs, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useNav } from '../nav';
 import { useProfiles } from '../hooks';
 import { s, C, Avatar, Segment } from '../ui';
 import FollowButton from '../components/FollowButton';
-import { startDirectChat } from './Chats';
+import { friendlyError } from '../errors';
+import { watchFollowing, watchFollowers } from '../services/follows';
+import { discoverProfiles } from '../services/profiles';
+import { startDirectChat } from '../services/chats';
 
 // Friends = people who follow you back. Also: who you follow, your followers, and people to discover.
 export default function Friends() {
@@ -16,21 +17,12 @@ export default function Friends() {
   const [followers, setFollowers] = useState([]);
   const [discover, setDiscover] = useState([]);
 
-  useEffect(() => onSnapshot(query(collection(db, 'follows'), where('follower', '==', me.uid), limit(200)),
-    (sn) => setFollowing(sn.docs.map((d) => d.data().followee))), [me.uid]);
-  useEffect(() => onSnapshot(query(collection(db, 'follows'), where('followee', '==', me.uid), limit(200)),
-    (sn) => setFollowers(sn.docs.map((d) => d.data().follower))), [me.uid]);
+  useEffect(() => watchFollowing(me.uid, 200, setFollowing), [me.uid]);
+  useEffect(() => watchFollowers(me.uid, 200, setFollowers), [me.uid]);
 
   // "Discover": the most followed people, then the newest members (so it is never empty)
   useEffect(() => {
-    Promise.all([
-      getDocs(query(collection(db, 'profiles'), orderBy('followerCount', 'desc'), limit(20))),
-      getDocs(query(collection(db, 'profiles'), orderBy('createdAt', 'desc'), limit(20))),
-    ]).then(([top, fresh]) => {
-      const seen = new Set();
-      const all = [...top.docs, ...fresh.docs].filter((d) => (seen.has(d.id) ? false : seen.add(d.id)));
-      setDiscover(all.map((d) => ({ uid: d.id, ...d.data() })));
-    }).catch((e) => console.warn('discover', e.message));
+    discoverProfiles().then(setDiscover).catch((e) => console.warn('discover', e.message));
   }, []);
 
   const friends = following.filter((u) => followers.includes(u));
@@ -41,7 +33,7 @@ export default function Friends() {
     : uids.map((u) => ({ uid: u, ...(profiles[u] || {}) }));
 
   const message = async (p) => {
-    try { openChat(await startDirectChat(me, p.uid, p.username || 'user')); } catch (e) { Alert.alert('Could not open chat', e.message); }
+    try { openChat(await startDirectChat(me, p.uid, p.username || 'user')); } catch (e) { Alert.alert('Could not open chat', friendlyError(e)); }
   };
   const invite = () => Share.share({ message: `Join me on Bubbly! My username is @${me.username}. Invite code: ${me.uid.slice(0, 6).toUpperCase()}` });
 

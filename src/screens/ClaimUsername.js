@@ -1,29 +1,19 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
-import { doc, runTransaction, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { ui } from '../theme';
+import { friendlyError } from '../errors';
+import { usernameProblem } from '../validation';
+import { claimUsername } from '../services/profiles';
 
 export default function ClaimUsername({ user }) {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
 
   const claim = async () => {
-    const n = name.trim().toLowerCase();
-    if (!/^[a-z0-9_]{3,20}$/.test(n)) {
-      return Alert.alert('Invalid username', 'Use 3 to 20 letters, numbers or underscores.');
-    }
+    const problem = usernameProblem(name);
+    if (problem) return Alert.alert('Invalid username', problem);
     setBusy(true);
-    try {
-      await runTransaction(db, async (tx) => {
-        const uref = doc(db, 'usernames', n);
-        if ((await tx.get(uref)).exists()) throw new Error('That username is already taken.');
-        tx.set(uref, { uid: user.uid });
-        tx.set(doc(db, 'profiles', user.uid), { username: n, createdAt: serverTimestamp() });
-      });
-    } catch (e) {
-      Alert.alert('Could not claim username', e.message);
-    }
+    try { await claimUsername(user.uid, name); } catch (e) { Alert.alert('Could not claim username', friendlyError(e)); }
     setBusy(false);
   };
 

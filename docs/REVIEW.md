@@ -56,3 +56,16 @@ live rooms with chat, viewers, heartbeat and automatic closing, follower notific
 **Checked**: every file compiles, all 64 local imports resolve, and the backend loads all 32 functions.
 **Not checked**: running on a phone or against the emulator, and the new security rules (the rules tester needs the emulator).
 Expect a few small bugs on first run; send me the message and I will fix them.
+
+
+---
+# Update: backend wrap-up (checklist phases 1 to 5)
+See docs/CHECKLIST.md for the status of every item.
+**Security**: rules tightened (one username per account, valid and non-reserved names, direct chat ids that cannot be forged, channels where
+you can only add or remove yourself, follows stamped with server time, settings limited to known fields); Storage now rejects uploads under 1 KB.
+**Backend**: callables wrapped by `safe()`, structured logging, ranking and video logic extracted into tested modules, much more thorough account deletion.
+**App**: all Firebase calls moved into `src/services/`; friendly errors everywhere; "Forgot password?" and verification email; offline banner;
+pagination for feeds, comments, chat messages, activity and the profile grid; development and production environments.
+**Tests**: 33 automated tests pass here. 50 security tests and a smoke test are written but need your laptop (the emulators cannot be downloaded in my environment).
+**Docs**: CHECKLIST, ENVIRONMENTS, DATA_MODEL, TESTING, PRODUCTION.
+**Not done (needs you)**: create the production project, billing and monitoring alerts, backups, production deploy and verification.
