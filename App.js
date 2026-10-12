@@ -52,7 +52,7 @@ function AuthScreen() {
   };
   return (
     <View style={s.center}>
-      <Logo size={88} /><Text style={s.brand}>Bubbly</Text>
+      <Logo size={88} /><Text style={s.brand}>Zeva</Text>
       <TextInput style={s.input} placeholder="Email" placeholderTextColor={C.mist} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
       <TextInput style={s.input} placeholder="Password (6+ characters)" placeholderTextColor={C.mist} secureTextEntry value={pass} onChangeText={setPass} />
       <TouchableOpacity style={s.btn} onPress={submit} disabled={busy}>

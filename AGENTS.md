@@ -1,41 +1,11 @@
-This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
+# Notes for AI coding agents
 
-## Expo has changed — do not trust your training data
+Expo SDK 57 / React Native app (`App.js` entry, custom navigation, no Expo Router) with a Firebase backend in `functions/`. Read `README.md` and `docs/BACKEND.md` first.
 
-Expo ships breaking changes every SDK release. APIs you remember are likely renamed, moved, or removed. Before writing any code that touches an Expo, EAS, or React Native API:
-
-1. Read the major version of the `expo` package in `package.json`.
-2. Fetch the matching versioned docs: `https://docs.expo.dev/versions/v<major>.0.0/`
-3. For anything else, fetch https://docs.expo.dev/llms.txt — an index of all Expo docs with corrections to common LLM misconceptions. Follow its links to the specific page you need; never answer from memory.
-
-## Commands
-
-Use `bunx` instead of `npx` if the project uses bun (`bun.lock` present).
-
-```bash
-npx expo install <package>  # ALWAYS use instead of npm/yarn/pnpm/bun add — resolves SDK-compatible versions
-npx expo start              # start the dev server
-npx expo lint               # lint
-npx tsc --noEmit            # typecheck
-npx expo-doctor             # diagnose dependency and config issues
-npx expo install --fix      # fix incompatible package versions
-```
-
-Run lint and typecheck before declaring any task done.
-
-## Navigation & Routing
-
-- Use **Expo Router** for all navigation. Routes live in `src/app/` — every file there is a screen, `_layout.tsx` files define navigators. Keep non-route code (components, hooks, utils) outside `src/app/`.
-- Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
-- Docs: https://docs.expo.dev/router/introduction.md
-
-## Building with EAS
-
-Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.
-Docs: https://docs.expo.dev/eas/index.md
-
-## Rules
-
-- If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
-- Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build: `npx expo run:ios|android` locally, or `eas build --profile development`.
-- Prefer recommended Expo modules over third-party libraries, and check your available skills before adding dependencies. Docs: https://docs.expo.dev/versions/latest/index.md
+- Expo APIs change between SDKs. Before touching Expo/React Native APIs, read the `expo` version in `package.json` and check https://docs.expo.dev/llms.txt and the matching versioned docs instead of relying on memory.
+- Install packages with `npx expo install <package>`. Native-code libraries need a development build, not Expo Go.
+- Never edit `ios/` or `android/`; configure native settings in `app.json`.
+- Screens and components must not import `firebase/*`; add a function to `src/services/` instead. Show errors through `src/errors.js`.
+- Clients must never write counters, scores, statuses or `lastMessage`; do that in a Cloud Function. Any rule change needs a test in `tests/rules.test.js`.
+- The Firebase project ID `bubbly-bfef3` is a legacy name and must not be renamed in config.
+- Before finishing: `npm test`, and `npm run test:rules` if rules changed; `npx expo lint` for app code.

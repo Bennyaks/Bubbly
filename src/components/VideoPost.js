@@ -82,7 +82,7 @@ export function Post({ item, height, active, onComments }) {
   }, [active, item.id]);
   const share = async () => {
     try {
-      const r = await Share.share({ message: `Watch "${item.caption}" by ${item.author} on Bubbly` });
+      const r = await Share.share({ message: `Watch "${item.caption}" by ${item.author} on Zeva` });
       if (r.action === Share.sharedAction) recordShare(item.id).catch(() => {});
     } catch (e) { /* user cancelled */ }
   };

@@ -41,7 +41,7 @@ function videoProblem(bytes, seconds) {
 }
 
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
-const RESERVED = ['admin', 'administrator', 'support', 'help', 'bubbly', 'moderator', 'staff', 'official', 'system', 'root', 'security', 'team'];
+const RESERVED = ['admin', 'administrator', 'support', 'help', 'zeva', 'moderator', 'staff', 'official', 'system', 'root', 'security', 'team'];
 const validUsername = (n) => USERNAME_RE.test(n) && !RESERVED.includes(n);
 
 module.exports = { USERNAME_RE, MAX_VIDEO_SECONDS, milestone, extractHashtags, rankScore, durationFromHeader, durationFromProgress, videoProblem, validUsername, RESERVED };

@@ -27,7 +27,7 @@ export default function Settings() {
   useEffect(() => watchLinks(me.uid, setLinkState), [me.uid]);
 
   const save = (app, v) => setLinks(me.uid, { ...links, [app]: v.trim() }).catch((e) => Alert.alert('Could not save', friendlyError(e)));
-  const invite = () => Share.share({ message: `Join me on Bubbly! My username is @${me.username}. Invite code: ${me.uid.slice(0, 6).toUpperCase()}` });
+  const invite = () => Share.share({ message: `Join me on Zeva! My username is @${me.username}. Invite code: ${me.uid.slice(0, 6).toUpperCase()}` });
   const resend = () => resendVerification()
     .then(() => Alert.alert('Sent', 'Check your inbox for the verification link.'))
     .catch((e) => Alert.alert('Could not send', friendlyError(e)));

@@ -11,7 +11,7 @@ let ffmpeg = null;
 try { ffmpeg = require('ffmpeg-static'); if (!ffmpeg || !fs.existsSync(ffmpeg)) ffmpeg = null; } catch (e) { ffmpeg = null; }
 const opts = { skip: ffmpeg ? false : 'ffmpeg-static is not installed' };
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bubbly-video-'));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zeva-video-'));
 const file = (n) => path.join(dir, n);
 function makeVideo(name, extra = []) {
   execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=duration=5:size=320x240:rate=15',

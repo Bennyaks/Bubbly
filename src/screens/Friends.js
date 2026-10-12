@@ -35,7 +35,7 @@ export default function Friends() {
   const message = async (p) => {
     try { openChat(await startDirectChat(me, p.uid, p.username || 'user')); } catch (e) { Alert.alert('Could not open chat', friendlyError(e)); }
   };
-  const invite = () => Share.share({ message: `Join me on Bubbly! My username is @${me.username}. Invite code: ${me.uid.slice(0, 6).toUpperCase()}` });
+  const invite = () => Share.share({ message: `Join me on Zeva! My username is @${me.username}. Invite code: ${me.uid.slice(0, 6).toUpperCase()}` });
 
   return (
     <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 8 }}>
@@ -64,7 +64,7 @@ export default function Friends() {
           </TouchableOpacity>
         )}
       />
-      <TouchableOpacity style={s.btn} onPress={invite}><Text style={s.btnTx}>Invite friends to Bubbly</Text></TouchableOpacity>
+      <TouchableOpacity style={s.btn} onPress={invite}><Text style={s.btnTx}>Invite friends to Zeva</Text></TouchableOpacity>
     </View>
   );
 }

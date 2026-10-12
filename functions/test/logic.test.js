@@ -70,5 +70,5 @@ test('videoProblem: tiny, unreadable, too long, fine', () => {
 
 test('usernames: format and reserved words', () => {
   for (const ok of ['abc', 'mandera_b', 'user123', 'a_b_c', 'x'.repeat(20)]) assert.equal(validUsername(ok), true, ok);
-  for (const bad of ['ab', 'x'.repeat(21), 'Upper', 'has space', 'dash-name', 'dot.name', '', 'admin', 'bubbly', 'support']) assert.equal(validUsername(bad), false, bad);
+  for (const bad of ['ab', 'x'.repeat(21), 'Upper', 'has space', 'dash-name', 'dot.name', '', 'admin', 'zeva', 'support']) assert.equal(validUsername(bad), false, bad);
 });

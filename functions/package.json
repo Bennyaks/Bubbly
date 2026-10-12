@@ -1,5 +1,5 @@
 {
-  "name": "bubbly-functions",
+  "name": "zeva-functions",
   "private": true,
   "main": "index.js",
   "engines": { "node": "20" },

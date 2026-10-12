@@ -1,59 +1,63 @@
-# Data model and who owns what
+# Data model
 
-Rule of thumb: **the app may only create things that belong to the signed-in person, and may never write counters, scores,
-statuses or other people's data. Those are written by Cloud Functions.** `tests/rules.test.js` proves each line below.
+Rule: **the app may only create things that belong to the signed-in user and may never write counters, scores, statuses or other people's data. Cloud Functions write those.** `tests/rules.test.js` proves each row below.
 
-## Ownership table
-| Collection | Who can read | Who can create | Who can change | Who can delete |
-|---|---|---|---|---|
-| `posts/{id}` | signed in; only `ready` videos (the owner also sees their own) | the owner, as `processing` with zero counters | nobody (server updates status, counters, score) | the owner |
-| `posts/{id}/likes/{uid}` | signed in | that person | nobody | that person |
-| `posts/{id}/comments/{id}` | signed in | the author (1 to 500 characters) | nobody | the author or the video owner |
-| `profiles/{uid}` | signed in | that person, together with a valid unique username | the owner: display name, bio only | server (account deletion) |
-| `usernames/{name}` | signed in | that person, once, valid format, not reserved | nobody | server |
-| `users/{uid}` (settings) | only that person | only that person, only the `links` field | same | same |
-| `follows/{a_b}` | signed in | `a` (the follower), correct id, not self | nobody | the follower |
-| `chats/{id}` | members | any person for a direct chat with the fixed id, or a group they own (max 50) | members: only their own read marker and unread count; server: last message, members | server |
-| `chats/{id}/messages/{id}` | members | a member, as themselves, 1 to 4000 characters | nobody | server |
-| `channels/{id}` | signed in | the owner | anyone: only to add or remove THEMSELVES | server |
-| `channels/{id}/posts/{id}` | signed in | the channel owner only | nobody | server |
-| `notifications/{uid}/items/{id}` | that person | server only | that person: mark read | that person |
-| `users/{uid}/chatPrefs/{chat}` | that person | that person | that person | that person |
-| `lives/{id}` | signed in | server only | server only | server |
-| `lives/{id}/messages/{id}` | signed in | anyone signed in, as themselves, while the live is running | nobody | server |
-| `lives/{id}/viewers/{uid}` | signed in | that person | nobody | that person |
-| `meta/trending` | signed in | server | server | server |
-| `reports`, `pushTokens`, `ratelimits`, `users/{uid}/seen`, `users/{uid}/shared` | nobody | server | server | server |
+## Collections and ownership
+| Path | Fields | Read | Create | Update | Delete |
+|---|---|---|---|---|---|
+| `posts/{id}` | uid, author, caption (≤150), status, likeCount, commentCount, shareCount, viewCount, completeCount, score, createdAt; server adds videoPath/Token, thumbPath/Token, (prod) videoUrl/thumbUrl, durationSec, hashtags[], error, removedReason | signed in; only `ready` (owner sees own) | owner, as `processing` with all counters 0 | nobody (server) | owner |
+| `posts/{id}/likes/{uid}` | createdAt | signed in | that user | nobody | that user |
+| `posts/{id}/comments/{id}` | text (1–500), uid, author, createdAt | signed in | author | nobody | author or video owner |
+| `profiles/{uid}` | username, displayName (≤40), bio (≤150), avatarUrl, followerCount, followingCount, videoCount | signed in | that user, with a matching username claim | owner: displayName, bio, avatarUrl only | server |
+| `usernames/{name}` | uid | signed in | that user, once; `[a-z0-9_]{3,20}`, not reserved, must match the profile in the same batch | nobody | server |
+| `users/{uid}` | links (map ≤10) | owner | owner, `links` only | same | server |
+| `users/{uid}/chatPrefs/{chatId}` | pinned, muted, archived | owner | owner | owner | owner |
+| `users/{uid}/seen/{postId}`, `shared/{postId}` | at, completed | nobody | server | server | server |
+| `follows/{follower_followee}` | follower, followee, createdAt | signed in | follower; id must be `follower_followee`, not self | nobody | follower |
+| `blocks/{uid}/list/{target}` | createdAt | owner | owner | owner | owner |
+| `chats/{id}` | type (direct/group), title (≤40), members[≤50], names{}, ownerUid, createdAt; server: lastMessage; members: lastRead{}, unread{} | members | direct: id = both uids sorted joined by `_`; group: caller is owner | members: only their own `lastRead`/`unread` | server |
+| `chats/{id}/messages/{id}` | text (1–4000), from, fromName, createdAt | members | a member, as themselves | nobody | server |
+| `channels/{id}` | name (≤40), ownerUid, members[], createdAt | signed in | owner, members = [owner] | anyone: add or remove only themselves | server |
+| `channels/{id}/posts/{id}` | text (≤4000), createdAt | signed in | channel owner | nobody | server |
+| `notifications/{uid}/items/{id}` | type, fromUid, fromName, text, postId/liveId, read, createdAt | owner | server | owner: `read` only | owner |
+| `lives/{id}` | hostUid, hostName, title, status, viewerCount, video, startedAt, endedAt, lastBeat | signed in | server | server | server |
+| `lives/{id}/messages/{id}` | text (≤200), from, fromName, createdAt | signed in | signed in, as self, while `status == live` | nobody | server |
+| `lives/{id}/viewers/{uid}` | at | signed in | that user | nobody | that user |
+| `meta/trending` | tags[{tag,score}], updatedAt | signed in | server | server | server |
+| `reports/{type_id_uid}`, `pushTokens/{uid}`, `ratelimits/{uid_key}` | server data | nobody | server | server | server |
 
-**Storage:** `videos/{uid}/{postId}.mp4` is written only by the owner (1 KB to 100 MB, video type, no overwrite).
-`thumbs/` is written only by the server. Everything else is closed.
+Post `status`: `processing` → `ready` | `failed` | `removed`.
 
-## Known trade-offs (accepted for now)
-- Anyone can add a person to a group chat without asking them. Add "accept invite" before a large launch.
-- `channels.members` and `chats.members` are arrays (1 MB document limit): fine up to a few thousand members.
-- A hot video's `likeCount` can exceed Firestore's ~1 write per second per document. Plan: sharded counters.
+**Storage:** `videos/{uid}/{postId}.mp4` written only by the owner (1 KB–100 MB, `video/*`, no overwrite, owner may delete). `thumbs/` written by functions only. All signed-in users may read. Everything else closed.
 
-## Pagination (so reads and bills stay predictable)
-| Screen | First load | More | Hard cap |
+## Pagination (keeps reads and cost predictable)
+| Screen | First load | More | Cap |
 |---|---|---|---|
-| For You / Following feed | 20 | +20 when you near the end | 100 |
-| Comments | 30 | "Show more comments" +30 | no cap (user action) |
-| Chat messages | newest 50 | "Load earlier messages" +50 | no cap (user action) |
-| Activity | 30 | "Load more" +30 | no cap (user action) |
-| Profile video grid | 30 | +30 when you scroll | 300 |
-| Chat list | 100 | none | 100 |
-| Search by #tag | 30 | none | 30 |
+| For You / Following feed | 20 | +20 near the end | 100 |
+| Comments | 30 | +30 | none |
+| Chat messages | newest 50 | +50 | none |
+| Activity | 30 | +30 | none |
+| Profile video grid | 30 | +30 | 300 |
+| Chat list | 100 | no | 100 |
+| #tag search | 30 | no | 30 |
+Following feed uses `uid in [followees]`, 30 per query.
 
-## Every query and its index
-Single-field indexes are automatic. These need entries in `firestore.indexes.json` (already there):
-| Query | Index |
+## Indexes (`firestore.indexes.json`)
+Single-field indexes are automatic. Required composite indexes:
+| Query | Fields |
 |---|---|
-| posts: status ==, order by score desc | status, score |
-| posts: status ==, order by createdAt desc (ranking job) | status, createdAt |
-| posts: uid ==, status ==, order by createdAt desc (profile, Following feed) | uid, status, createdAt |
-| posts: hashtags array-contains, status ==, order by score desc | hashtags, status, score |
-| lives: status ==, order by startedAt desc | status, startedAt |
-| lives: status ==, lastBeat < (stale cleanup) | status, lastBeat |
-| comments (collection group): uid == (account deletion) | field override on `comments.uid` |
-The emulator does not need indexes, so a missing one only shows up in production. If a screen shows
-"The query requires an index", the error message contains a link that creates it in one click.
+| feed | posts: status, score desc |
+| ranking job | posts: status, createdAt desc |
+| profile grid, Following feed | posts: uid, status, createdAt desc |
+| #tag search | posts: hashtags (array-contains), status, score desc |
+| following / followers lists | follows: follower, createdAt desc · followee, createdAt desc |
+| live list | lives: status, startedAt desc |
+| stale live cleanup | lives: status, lastBeat asc |
+| account deletion | collection-group override on `comments.uid` |
+
+The emulator ignores indexes; a missing one fails only in production, and the error contains a link that creates it.
+
+## Known trade-offs
+- Anyone can add a person to a group without consent.
+- Array `members` fields cap at 1 MiB per document.
+- A hot video's `likeCount` can exceed Firestore's ~1 write/second per document.

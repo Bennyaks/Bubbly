@@ -1,5 +1,5 @@
 {
-  "name": "bubbly-security-tests",
+  "name": "zeva-security-tests",
   "private": true,
   "description": "Security rule tests. Kept separate so the app's own Firebase version is not affected. Run: npm run test:rules (from the project folder)",
   "dependencies": {

@@ -1,5 +1,5 @@
 {
-  "name": "bubbly",
+  "name": "zeva",
   "version": "1.0.0",
   "main": "index.js",
   "dependencies": {
@@ -28,11 +28,14 @@
     "emulators": "firebase emulators:start --import=./emulator-data --export-on-exit",
     "emulators:fresh": "firebase emulators:start --export-on-exit=./emulator-data",
     "test": "node --test \"functions/test/*.test.js\" \"src/tests/*.test.js\"",
-    "test:rules": "npm install --prefix tests && firebase emulators:exec --only firestore,storage --project demo-bubbly \"node --test tests/rules.test.js\"",
+    "test:rules": "npm install --prefix tests && firebase emulators:exec --only firestore,storage --project demo-zeva \"node --test tests/rules.test.js\"",
     "test:all": "npm test && npm run test:rules",
     "smoke": "node scripts/smoke.js",
     "deploy:dev": "firebase deploy --project dev",
     "deploy:prod": "firebase deploy --project prod"
   },
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "@expo/ngrok": "^4.1.3"
+  }
 }

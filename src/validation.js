@@ -1,6 +1,6 @@
 // Input rules shared by the screens. They mirror functions/logic.js and firestore.rules (a test checks this).
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
-const RESERVED_USERNAMES = ['admin', 'administrator', 'support', 'help', 'bubbly', 'moderator', 'staff', 'official', 'system', 'root', 'security', 'team'];
+const RESERVED_USERNAMES = ['admin', 'administrator', 'support', 'help', 'zeva', 'moderator', 'staff', 'official', 'system', 'root', 'security', 'team'];
 
 function usernameProblem(raw) {
   const n = String(raw || '').trim().toLowerCase().replace(/^@/, '');

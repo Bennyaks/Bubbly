@@ -43,7 +43,7 @@ export default function Upload({ user, username, onClose }) {
         <Text style={s.h1}>Upload a video</Text>
         <TouchableOpacity style={[s.btn, { backgroundColor: C.line }]} onPress={pick}><Text style={s.btnTx}>{asset ? 'Video selected ✓' : 'Choose video'}</Text></TouchableOpacity>
         <TextInput style={[s.input, { marginTop: 10 }]} placeholder="Write a caption (use #hashtags)" placeholderTextColor={C.mist} value={cap} onChangeText={setCap} maxLength={120} />
-        <TouchableOpacity style={s.btn} onPress={post} disabled={busy}>{busy ? <Text style={s.btnTx}>Uploading…</Text> : <Text style={s.btnTx}>Post to Bubbly</Text>}</TouchableOpacity>
+        <TouchableOpacity style={s.btn} onPress={post} disabled={busy}>{busy ? <Text style={s.btnTx}>Uploading…</Text> : <Text style={s.btnTx}>Post to Zeva</Text>}</TouchableOpacity>
         <TouchableOpacity onPress={onClose}><Text style={s.link}>Cancel</Text></TouchableOpacity>
       </View></View>
     </Modal>

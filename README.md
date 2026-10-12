@@ -1,40 +1,56 @@
-# Bubbly
+# Zeva
 
-A Telegram + TikTok style social app: short videos with a ranked feed, chats, groups, channels, follows, and live streaming (coming).
-Runs on Android, iPhone and web from one Expo codebase. The backend is Firebase, and for development it runs free on your laptop.
+A short-video + messaging social app (TikTok-style feed, Telegram-style chats, groups and channels, follows, live rooms).
+One Expo / React Native codebase runs on Android, iOS and web. The backend is Firebase (Auth, Firestore, Storage, Cloud Functions).
+In development the whole backend runs free on your laptop through the Firebase Emulator Suite.
 
-## Folder map
+> **Legacy name:** the Firebase project ID is still `bubbly-bfef3` (the app's former name). Firebase project IDs cannot be renamed.
+> It appears in `.firebaserc`, `firebase.js`, `scripts/smoke.js` and the emulator URLs in the docs. Leave it unless you migrate to a new project
+> (see docs/DEPLOYMENT.md, "Moving to a different Firebase project").
+
+## Where things are
 ```
-Bubbly/bubbly/
-  App.js                    app screens: login, video feed, upload, channels, profile
-  firebase.js               connects the app to Firebase or to the local emulators (auto-detects your laptop)
-  src/screens/Chats.js      chats, groups, unread markers
-  src/screens/ClaimUsername.js   unique @username
-  src/theme.js              shared colors and styles
-  firebase.json             Firebase config + emulator ports
-  firestore.rules           database security rules
-  firestore.indexes.json    database indexes
-  storage.rules             video upload rules
-  functions/                the backend (Cloud Functions): see docs/BACKEND.md
-  docs/                     guides (start with EMULATOR.md)
+zeva/
+  App.js, index.js            app shell (login, tabs, screen stack)
+  firebase.js                 Firebase config; auto-connects to the emulators in dev
+  src/services/               ALL Firebase and Cloud Function calls from the app (screens never import firebase directly)
+  src/screens, components/    UI
+  functions/                  Cloud Functions backend (32 functions)  -> docs/BACKEND.md
+  firestore.rules             Firestore security rules
+  storage.rules               Storage security rules
+  firestore.indexes.json      Composite indexes (needed in production, not in the emulator)
+  firebase.json  .firebaserc  emulator ports, deploy targets, project aliases (dev / prod)
+  tests/                      security-rule tests (need emulators)
+  scripts/smoke.js            end-to-end check of a running backend
+  docs/                       see below
 ```
 
-## First-time setup (once)
-1. Install Java 21+ (for the emulators), then `npm install -g firebase-tools`
-2. In this folder run:  `npm install`   then   `npm run backend:install`
-3. The packages added in this update are installed by step 2 (`react-native-safe-area-context`, `expo-constants`)
+## Quick start
+Prerequisites: Node 20+, Java 21+ (emulators), `npm install -g firebase-tools`.
+```
+npm install
+npm run backend:install          # installs functions/ dependencies
+npm run emulators:fresh          # terminal 1, first run only. Afterwards: npm run emulators
+npx expo start -c                # terminal 2; scan the QR code or press w for web
+```
+Emulator control panel: http://localhost:4000
 
-## Every day
-Terminal 1 (backend):  `npm run emulators`
-   (very first time ever use `npm run emulators:fresh`)
-Terminal 2 (app):      `npx expo start -c`   then scan the QR code with Expo Go (same Wi-Fi), or press `w` for web
-Control panel:         http://localhost:4000
+## Commands
+| Command | Purpose |
+|---|---|
+| `npm test` | 33 unit and structure tests, no emulator needed |
+| `npm run test:rules` | 50 security-rule tests (starts its own emulators) |
+| `npm run smoke` | end-to-end check against a running backend |
+| `npm run emulators` / `emulators:fresh` | local backend, with / without previously saved data |
+| `npm run deploy:dev` / `deploy:prod` | deploy to the dev / prod Firebase project |
 
-You no longer need to type your laptop's IP anywhere. It is detected automatically.
-
-## Guides
-- docs/EMULATOR.md   run everything free on your laptop
-- docs/BACKEND.md    architecture, data model, every function, deploy steps, limits
-- docs/POSTING_FIX.md  history of the video-upload bug and how it is diagnosed
-- docs/REVIEW.md     what was reviewed and changed in the latest update
-# Bubbly
+## Docs (read in this order)
+| File | What it covers |
+|---|---|
+| docs/BACKEND.md | what the backend contains: every function, flows, config values, maintenance gotchas |
+| docs/TESTING.md | how to test the backend end to end, for someone new to the code |
+| docs/DATA_MODEL.md | collections, who may read/write what, indexes, pagination |
+| docs/EMULATOR.md | running and debugging the local backend |
+| docs/DEPLOYMENT.md | environments, release steps, monitoring, backups, rollback |
+| docs/LIVE.md | live rooms: what works, how to enable real video |
+| docs/APP_GUIDE.md | screens and the service layer of the app |

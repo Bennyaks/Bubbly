@@ -15,7 +15,7 @@ let env;
 
 before(async () => {
   env = await initializeTestEnvironment({
-    projectId: 'demo-bubbly',
+    projectId: 'demo-zeva',
     firestore: { rules: read('firestore.rules') },
     storage: { rules: read('storage.rules') },
   });
@@ -29,7 +29,7 @@ const seed = (fn) => env.withSecurityRulesDisabled((ctx) => fn(ctx.firestore()))
 const ts = () => serverTimestamp();
 
 const newPost = (uid, extra = {}) => ({
-  uid, author: `${uid}_name`, caption: 'hello #bubbly', status: 'processing',
+  uid, author: `${uid}_name`, caption: 'hello #zeva', status: 'processing',
   likeCount: 0, commentCount: 0, shareCount: 0, viewCount: 0, completeCount: 0, score: 0, createdAt: ts(), ...extra,
 });
 const readyPost = (uid) => ({ uid, author: uid, caption: 'x', status: 'ready', likeCount: 3, commentCount: 0, shareCount: 0, viewCount: 9, completeCount: 1, score: 2, createdAt: new Date() });
@@ -132,7 +132,7 @@ describe('usernames and profiles', () => {
     await assertFails(claim(as('bob'), 'bob', 'alice_1'));
   });
   it('rejects bad formats and reserved names', async () => {
-    for (const bad of ['ab', 'UPPER', 'has space', 'dash-name', 'x'.repeat(21), 'admin', 'support', 'bubbly']) {
+    for (const bad of ['ab', 'UPPER', 'has space', 'dash-name', 'x'.repeat(21), 'admin', 'support', 'zeva']) {
       await assertFails(claim(as('alice'), 'alice', bad));
     }
   });

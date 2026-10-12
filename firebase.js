@@ -88,10 +88,10 @@ function detectHost() {
   return 'localhost';
 }
 export const EMULATOR_HOST = detectHost();
-if (USE_EMULATOR) console.log('Bubbly backend host:', EMULATOR_HOST);
+if (USE_EMULATOR) console.log('Zeva backend host:', EMULATOR_HOST);
 
-if (USE_EMULATOR && !globalThis.__bubblyEmulators) {
-  globalThis.__bubblyEmulators = true;   // guard so fast refresh does not connect twice
+if (USE_EMULATOR && !globalThis.__zevaEmulators) {
+  globalThis.__zevaEmulators = true;   // guard so fast refresh does not connect twice
   connectAuthEmulator(auth, `http://${EMULATOR_HOST}:9099`, { disableWarnings: true });
   connectFirestoreEmulator(db, EMULATOR_HOST, 8080);
   connectStorageEmulator(storage, EMULATOR_HOST, 9199);
